@@ -4,7 +4,7 @@
 从 FRED API 获取核心宏观数据，计算衍生指标和信号，输出 data/dashboard.json
 """
 
-import os, sys, json, math, datetime, time, io, zipfile, csv
+import os, sys, json, math, datetime, time, io, zipfile, csv, re
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple
 import requests
@@ -70,6 +70,29 @@ def fetch_fred(series_id: str) -> List[dict]:
         result.append({"date": o["date"], "value": float(o["value"])})
     return result
 
+def _fallback_old(key: str) -> List[dict]:
+    """yfinance/外部数据源拉取失败时，从上次生成的 dashboard.json 回填历史序列（保底，避免空数据崩溃）"""
+    if not OUTPUT_FILE.exists():
+        return []
+    try:
+        old = json.loads(OUTPUT_FILE.read_text(encoding="utf-8"))
+        return old.get("history", {}).get(key, [])
+    except Exception:
+        return []
+
+
+def _fallback_old_gld() -> dict:
+    """GLD info 拉取失败时，回填上次生成的 gld 汇总字段"""
+    if not OUTPUT_FILE.exists():
+        return {}
+    try:
+        old = json.loads(OUTPUT_FILE.read_text(encoding="utf-8"))
+        g = old.get("gld", {})
+        return {k: g.get(k) for k in ("totalAssetsBln", "sharesOutstandingMln", "holdingsOunces", "flow5dPct", "navPrice", "volume")}
+    except Exception:
+        return {}
+
+
 def fetch_all() -> Dict[str, List[dict]]:
     """批量拉取所有 FRED 序列 + yfinance 黄金"""
     data = {}
@@ -96,10 +119,19 @@ def fetch_all() -> Dict[str, List[dict]]:
             if not np.isnan(val):
                 gold_series.append({"date": idx.strftime("%Y-%m-%d"), "value": float(val)})
         data["gold"] = gold_series
-        print(f"✓ {len(gold_series)} 条")
+        if gold_series:
+            print(f"✓ {len(gold_series)} 条")
+        else:
+            fallback = _fallback_old("gold")
+            if fallback:
+                data["gold"] = fallback
+                print(f"⚠ yfinance 受限，已回填旧金价 {len(fallback)} 条 (截止 {fallback[-1]['date']})")
+            else:
+                print(f"✗ 拉取失败且无旧数据可回填")
     except Exception as e:
-        print(f"✗ {e}")
-        data["gold"] = []
+        fallback = _fallback_old("gold")
+        data["gold"] = fallback or []
+        print(f"✗ {e}" + (f"，已回填旧数据 {len(fallback)} 条" if fallback else ""))
 
     # 油价（yfinance — WTI原油期货连续合约）
     print(f"  拉取 oil (CL=F via yfinance)...", end=" ")
@@ -112,10 +144,19 @@ def fetch_all() -> Dict[str, List[dict]]:
             if not np.isnan(val):
                 oil_series.append({"date": idx.strftime("%Y-%m-%d"), "value": float(val)})
         data["oil"] = oil_series
-        print(f"✓ {len(oil_series)} 条")
+        if oil_series:
+            print(f"✓ {len(oil_series)} 条")
+        else:
+            fallback = _fallback_old("oil")
+            if fallback:
+                data["oil"] = fallback
+                print(f"⚠ yfinance 受限，已回填旧油价 {len(fallback)} 条")
+            else:
+                print(f"✗ 拉取失败且无旧数据可回填")
     except Exception as e:
-        print(f"✗ {e}")
-        data["oil"] = []
+        fallback = _fallback_old("oil")
+        data["oil"] = fallback or []
+        print(f"✗ {e}" + (f"，已回填旧数据 {len(fallback)} 条" if fallback else ""))
 
     # 白银价格（yfinance — COMEX 白银期货连续合约）
     print(f"  拉取 silver (SI=F via yfinance)...", end=" ")
@@ -128,10 +169,19 @@ def fetch_all() -> Dict[str, List[dict]]:
             if not np.isnan(val):
                 silver_series.append({"date": idx.strftime("%Y-%m-%d"), "value": float(val)})
         data["silver"] = silver_series
-        print(f"✓ {len(silver_series)} 条")
+        if silver_series:
+            print(f"✓ {len(silver_series)} 条")
+        else:
+            fallback = _fallback_old("silver")
+            if fallback:
+                data["silver"] = fallback
+                print(f"⚠ yfinance 受限，已回填旧白银 {len(fallback)} 条")
+            else:
+                print(f"✗ 拉取失败且无旧数据可回填")
     except Exception as e:
-        print(f"✗ {e}")
-        data["silver"] = []
+        fallback = _fallback_old("silver")
+        data["silver"] = fallback or []
+        print(f"✗ {e}" + (f"，已回填旧数据 {len(fallback)} 条" if fallback else ""))
 
     # GDX 金矿ETF（yfinance）
     print(f"  拉取 GDX (yfinance)...", end=" ")
@@ -144,49 +194,127 @@ def fetch_all() -> Dict[str, List[dict]]:
             if not np.isnan(val):
                 gdx_series.append({"date": idx.strftime("%Y-%m-%d"), "value": float(val)})
         data["gdx"] = gdx_series
-        print(f"✓ {len(gdx_series)} 条")
+        if gdx_series:
+            print(f"✓ {len(gdx_series)} 条")
+        else:
+            fallback = _fallback_old("gdx")
+            if fallback:
+                data["gdx"] = fallback
+                print(f"⚠ yfinance 受限，已回填旧 GDX {len(fallback)} 条")
+            else:
+                print(f"✗ 拉取失败且无旧数据可回填")
     except Exception as e:
-        print(f"✗ {e}")
-        data["gdx"] = []
+        fallback = _fallback_old("gdx")
+        data["gdx"] = fallback or []
+        print(f"✗ {e}" + (f"，已回填旧数据 {len(fallback)} 条" if fallback else ""))
 
     return data
 
 # ─── CFTC COT 数据获取 ────────────────────────────────
+# Legacy Futures-Only 报告的表头列名 → 内部字段 key 映射（按表头动态定位列，避免硬编码索引）
+COT_HEADER_FIELDS = {
+    "Market and Exchange Names": "name",
+    "As of Date in Form YYYY-MM-DD": "date",
+    "Open Interest (All)": "openInterest",
+    "Noncommercial Positions-Long (All)": "nonCommLong",
+    "Noncommercial Positions-Short (All)": "nonCommShort",
+    "Noncommercial Positions-Spread (All)": "nonCommSpreads",
+    "Commercial Positions-Long (All)": "commLong",
+    "Commercial Positions-Short (All)": "commShort",
+    "Change in Open Interest (All)": "chgOpenInterest",
+    "Change in Noncommercial-Long (All)": "chgNonCommLong",
+    "Change in Noncommercial-Short (All)": "chgNonCommShort",
+}
+
+# 表头缺失/无法匹配时的回退索引（CFTC Legacy 格式的历史约定位置）
+COT_FALLBACK_INDEX = {
+    "name": 0, "date": 2, "openInterest": 7, "nonCommLong": 8, "nonCommShort": 9,
+    "nonCommSpreads": 10, "commLong": 11, "commShort": 12,
+    "chgOpenInterest": 37, "chgNonCommLong": 38, "chgNonCommShort": 39,
+}
+
+
+def _norm_header(s: str) -> str:
+    """表头归一化：仅保留字母数字并小写，便于容错匹配（忽略引号/括号/空格差异）"""
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def _build_cot_column_index(header_line: str) -> Dict[str, int]:
+    """根据表头行建立 字段→列索引 映射；表头匹配不到的字段回退到历史固定位置"""
+    index: Dict[str, int] = {}
+    if header_line:
+        for i, col in enumerate(header_line.split(",")):
+            norm = _norm_header(col.strip().strip('"'))
+            for header_name, key in COT_HEADER_FIELDS.items():
+                if norm == _norm_header(header_name):
+                    index[key] = i
+                    break
+    for key, fallback in COT_FALLBACK_INDEX.items():
+        index.setdefault(key, fallback)
+    return index
+
+
+def _parse_cot_row(line: str, index: Dict[str, int]) -> Optional[dict]:
+    """按列索引解析一行 COT 数据；非 GOLD COMEX 行或关键字段缺失时返回 None
+    列数不足的字段（如早期文件缺 changes 列）自动降级为 None，不影响核心字段"""
+    parts = [p.strip().strip('"') for p in line.split(",")]
+
+    def get_int(key: str) -> Optional[int]:
+        i = index.get(key)
+        if i is None or i >= len(parts):
+            return None
+        v = parts[i].replace(",", "").strip()
+        try:
+            return int(v)
+        except (ValueError, TypeError):
+            return None
+
+    name = parts[index["name"]].upper() if index.get("name") is not None and index["name"] < len(parts) else ""
+    # 精确匹配 COMEX 黄金（排除 MICRO GOLD 等类似品种）
+    if not name.startswith("GOLD - COMMODITY EXCHANGE"):
+        return None
+
+    date = parts[index["date"]].strip() if index.get("date") is not None and index["date"] < len(parts) else ""
+    oi = get_int("openInterest")
+    nl = get_int("nonCommLong")
+    ns = get_int("nonCommShort")
+    if not date or oi is None or nl is None or ns is None:
+        return None
+
+    return {
+        "date": date,
+        "openInterest": oi,
+        "nonCommLong": nl,
+        "nonCommShort": ns,
+        "nonCommSpreads": get_int("nonCommSpreads"),
+        "commLong": get_int("commLong"),
+        "commShort": get_int("commShort"),
+        "specNetLong": nl - ns,                                          # 投机净多头
+        "specNetLongPct": round((nl - ns) / oi * 100, 2) if oi > 0 else 0,
+        "chgOpenInterest": get_int("chgOpenInterest"),
+        "chgNonCommLong": get_int("chgNonCommLong"),
+        "chgNonCommShort": get_int("chgNonCommShort"),
+    }
+
+
 def fetch_cot_current() -> Optional[dict]:
     """从 CFTC 官方 Legacy Futures Only 当期报告获取 COMEX Gold 持仓数据"""
     print(f"  拉取 COT (CFTC deafut.txt)...", end=" ")
     try:
         r = requests.get("https://www.cftc.gov/dea/newcot/deafut.txt", timeout=30)
         r.raise_for_status()
-        gold_line = None
-        for line in r.text.split("\n"):
-            if line.startswith('"GOLD - COMMODITY EXCHANGE'):
-                gold_line = line
+        lines = r.text.split("\n")
+        # 第一行为表头（字段名），据此动态定位列；匹配失败时回退历史固定位置
+        index = _build_cot_column_index(lines[0] if lines else "")
+        result = None
+        for line in lines[1:]:
+            parsed = _parse_cot_row(line, index)
+            if parsed:
+                result = parsed
                 break
-        if not gold_line:
+        if not result:
             print("✗ 未找到 GOLD COMEX 行")
             return None
-        parts = [p.strip().strip('"') for p in gold_line.split(",")]
-        # Legacy format fields:
-        # [0]=Name, [1]=Date(YYMMDD), [2]=Date(YYYY-MM-DD), [3]=Code
-        # [7]=Open Interest, [8]=NonComm Long, [9]=NonComm Short, [10]=NonComm Spreads
-        # [11]=Comm Long, [12]=Comm Short
-        # [37-46]=Changes from prior week
-        result = {
-            "date": parts[2],
-            "openInterest": int(parts[7]),
-            "nonCommLong": int(parts[8]),
-            "nonCommShort": int(parts[9]),
-            "nonCommSpreads": int(parts[10]),
-            "commLong": int(parts[11]),
-            "commShort": int(parts[12]),
-            "specNetLong": int(parts[8]) - int(parts[9]),           # 投机净多头
-            "specNetLongPct": round((int(parts[8]) - int(parts[9])) / int(parts[7]) * 100, 2) if int(parts[7]) > 0 else 0,
-            # Changes
-            "chgOpenInterest": int(parts[37]),
-            "chgNonCommLong": int(parts[38]),
-            "chgNonCommShort": int(parts[39]),
-        }
         print(f"✓ {result['date']} 净多头:{result['specNetLong']}")
         return result
     except Exception as e:
@@ -210,31 +338,37 @@ def fetch_cot_history() -> List[dict]:
                     if fname.endswith(".txt"):
                         with z.open(fname) as f:
                             text = f.read().decode("utf-8", errors="replace")
-                            for line in text.split("\n"):
-                                if line.startswith('"GOLD - COMMODITY EXCHANGE'):
-                                    parts = [p.strip().strip('"') for p in line.split(",")]
-                                    if len(parts) > 12 and parts[7].strip():
-                                        oi = int(parts[7])
-                                        spec_net = int(parts[8]) - int(parts[9])
-                                        all_records.append({
-                                            "date": parts[2],
-                                            "specNetLong": spec_net,
-                                            "specNetLongPct": round(spec_net / oi * 100, 2) if oi > 0 else 0,
-                                            "openInterest": oi,
-                                        })
+                            lines = text.split("\n")
+                            index = _build_cot_column_index(lines[0] if lines else "")
+                            for line in lines[1:]:
+                                parsed = _parse_cot_row(line, index)
+                                if parsed:
+                                    all_records.append({
+                                        "date": parsed["date"],
+                                        "specNetLong": parsed["specNetLong"],
+                                        "specNetLongPct": parsed["specNetLongPct"],
+                                        "openInterest": parsed["openInterest"],
+                                    })
         except Exception:
             continue
-    all_records.sort(key=lambda x: x["date"])
+    # 按日期去重（保留最后一条，防 CFTC 修订/重复行）
+    dedup = {r["date"]: r for r in all_records}
+    all_records = sorted(dedup.values(), key=lambda x: x["date"])
     print(f"✓ {len(all_records)} 周")
     return all_records
 
 # ─── GLD ETF 持仓数据获取 ──────────────────────────────
 def fetch_gld_holdings() -> dict:
-    """通过 yfinance 获取 GLD ETF 的 totalAssets（AUM）和近期成交量来推导资金流"""
+    """通过 yfinance 获取 GLD ETF 的 totalAssets（AUM）和近期成交量来推导资金流
+    info 拉取失败时降级为仅返回成交/资金流数据（不丢失可用信息）"""
     print(f"  拉取 GLD ETF (yfinance)...", end=" ")
     try:
         t = yf.Ticker("GLD")
-        info = t.info
+        info = {}
+        try:
+            info = t.info
+        except Exception as e:
+            print(f"info 受限({type(e).__name__})，降级为成交数据...", end=" ")
         total_assets = info.get("totalAssets")          # 总资产（美元）
         nav_price = info.get("navPrice")                # NAV
         prev_close = info.get("previousClose")
@@ -267,12 +401,15 @@ def fetch_gld_holdings() -> dict:
             if prev_5 > 0:
                 flow_5d_pct = round((recent_5 / prev_5 - 1) * 100, 2)
 
-        # 估算持仓量（盎司）: totalAssets / 金价
+        # 估算持仓量：GLD 每份代表约 1/10 盎司
+        #   份额数 = AUM / NAV；持仓盎司 = 份额数 × 0.1
+        # 优先用 yfinance 提供的 navPrice（ETF 官方净值），缺失时回退到前收盘价近似
+        shares_outstanding = None
         holdings_oz = None
-        if total_assets and prev_close:
-            # GLD 每份约 1/10 盎司, 但用 totalAssets / 金价更直接
-            # 从 yfinance 已有的 gold 数据取最新金价
-            holdings_oz = round(total_assets / (prev_close * 10), 0)  # 粗略
+        nav = nav_price or prev_close
+        if total_assets and nav and nav > 0:
+            shares_outstanding = round(total_assets / nav, 0)
+            holdings_oz = round(shares_outstanding * 0.1, 0)
 
         result = {
             "totalAssets": total_assets,
@@ -282,9 +419,19 @@ def fetch_gld_holdings() -> dict:
             "volume": volume,
             "avgVolume": avg_volume,
             "flow5dPct": flow_5d_pct,
+            "sharesOutstandingMln": round(shares_outstanding / 1e6, 1) if shares_outstanding else None,
+            "holdingsOunces": holdings_oz,
             "history": hist_data[-30:],   # 最近 30 日
         }
-        print(f"✓ AUM=${result['totalAssetsBln']}B 5日流量:{flow_5d_pct}%")
+        # 全部数据源均受限时，回填上次生成的 GLD 汇总字段（至少保留展示数据）
+        if result["totalAssetsBln"] is None and result["flow5dPct"] is None:
+            old = _fallback_old_gld()
+            if old:
+                result.update(old)
+                print(f"✓ 已回填旧 GLD 数据 AUM=${old.get('totalAssetsBln')}B")
+                return result
+        oz_str = f"{holdings_oz / 1e6:.1f}M" if holdings_oz else "N/A"
+        print(f"✓ AUM=${result['totalAssetsBln']}B 持仓约 {oz_str} 盎司 5日流量:{flow_5d_pct}%")
         return result
     except Exception as e:
         print(f"✗ {e}")
@@ -981,6 +1128,12 @@ def main():
     print("\n[1/5] 拉取 FRED 数据...")
     raw = fetch_all()
 
+    # 关键序列为空时直接退出（避免后续空数组崩溃），提示可回填场景
+    if not raw.get("gold"):
+        print("\n❌ 金价数据为空（yfinance 不可用且无旧数据可回填），无法生成 Dashboard")
+        print("   请稍后重试，或检查网络/数据源状态")
+        sys.exit(1)
+
     print("\n[2/5] 拉取 CFTC COT & GLD ETF & 央行购金...")
     cot_current = fetch_cot_current()
     cot_history = fetch_cot_history()
@@ -1240,6 +1393,8 @@ def main():
         "cot": derived.get("cot"),
         "gld": {
             "totalAssetsBln": gld.get("totalAssetsBln") if gld else None,
+            "sharesOutstandingMln": gld.get("sharesOutstandingMln") if gld else None,
+            "holdingsOunces": gld.get("holdingsOunces") if gld else None,
             "flow5dPct": gld.get("flow5dPct") if gld else None,
             "navPrice": gld.get("navPrice") if gld else None,
             "volume": gld.get("volume") if gld else None,

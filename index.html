@@ -411,10 +411,14 @@ const KEY_LABELS = { realYield: '10Y实际利率(%)', gold: '黄金价格($)', g
 async function loadData() {
   try {
     const resp = await fetch('data/dashboard.json');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
     DATA = await resp.json();
     render();
   } catch (e) {
-    document.getElementById('loading').innerHTML = `<div style="color:var(--red)">数据加载失败: ${e.message}<br><small>请先运行 python3 fetch_data.py</small></div>`;
+    const hint = location.protocol === 'file:'
+      ? '当前是通过文件方式直接打开的：浏览器禁止 file:// 页面加载本地 JSON。<br>请在项目目录运行 <code>python -m http.server 8765</code>，然后访问 <code>http://localhost:8765</code>'
+      : '数据文件缺失或损坏，请先运行 <code>python3 fetch_data.py</code> 生成数据';
+    document.getElementById('loading').innerHTML = `<div style="color:var(--red)">数据加载失败: ${e.message}<br><small>${hint}</small></div>`;
   }
 }
 
@@ -450,6 +454,7 @@ function renderSummaryCards() {
   const sig = DATA.overallSignal;
   const sgr = DATA.silverGoldRatio || {};
   const gdx = DATA.gdx || {};
+  const gld = DATA.gld || {};
 
   const pctClass = v => v >= 0 ? 'up' : 'down';
   const arrow = v => v >= 0 ? '↑' : '↓';
@@ -472,7 +477,7 @@ function renderSummaryCards() {
     { label: '美元指数', value: `${dx.current.toFixed(1)}`, sub: `<span class="${invClass(dx.trend)}">${trendArrow(dx.trend)} 20日ROC: ${dx.roc20d !== null ? dx.roc20d.toFixed(1)+'%' : 'N/A'}</span>`, detail: '贸易加权美元指数。美元走弱时，以美元计价的黄金对海外买家更便宜。' },
     { label: '市场情绪', value: `<span style="color:${sentColor(sent.score)}">${sent.score}</span>`, sub: `<span style="color:${sentColor(sent.score)}">${sent.label}</span>`, detail: '综合情绪指数 (0-100)，融合VIX、实际利率趋势、美元动量、技术面、COT持仓和ETF资金流。极度恐惧往往是买入机会，极度贪婪需警惕。' },
     { label: '波动率 (20日)', value: `<span style="color:${volColor(vol.level)}">${vol.current20d !== null ? vol.current20d.toFixed(1) + '%' : 'N/A'}</span>`, sub: `<span style="color:${volColor(vol.level)}">${volLabel(vol.level)}</span>`, detail: '20日年化波动率。<10%=低波动(平静)，>20%=高波动(剧烈波动，期货风险加大)。' },
-    { label: '综合信号', value: `<div class="signal-badge ${sigClass(sig.direction)}">${sigIcon(sig.direction)} ${sig.label}</div>`, sub: `多:${sig.bullScore} / 空:${sig.bearScore}`, detail: `多空信号强度加权合计。多头总分${sig.bullScore}，空头总分${sig.bearScore}，差值>'5看多，<-5看空。` },
+    { label: '综合信号', value: `<div class="signal-badge ${sigClass(sig.direction)}">${sigIcon(sig.direction)} ${sig.label}</div>`, sub: `多:${sig.bullScore} / 空:${sig.bearScore}`, detail: `多空信号强度加权合计。多头总分${sig.bullScore}，空头总分${sig.bearScore}，差值 > 5 看多，< -5 看空。` },
   ];
 
   // 金银比卡片
@@ -486,6 +491,16 @@ function renderSummaryCards() {
     const gdxArrow = gdx.changePct1d != null ? arrow(gdx.changePct1d) : '→';
     const gdxPctStr = gdx.changePct1d != null ? `${gdx.changePct1d > 0 ? '+' : ''}${gdx.changePct1d.toFixed(2)}%` : 'N/A';
     cards.push({ label: 'GDX 金矿ETF', value: `$${fmt(gdx.current, 2)}`, sub: `<span class="${gdxPctClass}">${gdxArrow} ${gdxPctStr}</span>`, detail: `VanEck金矿股ETF。金价/GDX比: ${gdx.goldGdxRatio || 'N/A'}，20日动量: ${gdx.roc20d != null ? gdx.roc20d.toFixed(1)+'%' : 'N/A'}。金矿股是金价的杠杆投资。` });
+  }
+
+  // GLD 卡片
+  if (gld.totalAssetsBln != null) {
+    const flow = gld.flow5dPct;
+    const flowCls = flow != null ? (flow >= 0 ? 'up' : 'down') : 'neutral-c';
+    const flowArrow = flow != null ? (flow >= 0 ? '↑' : '↓') : '→';
+    const flowStr = flow != null ? `${flow >= 0 ? '+' : ''}${flow.toFixed(1)}%` : 'N/A';
+    const ozStr = gld.holdingsOunces ? `${fmt(gld.holdingsOunces / 1e6, 1)}M 盎司` : 'N/A';
+    cards.push({ label: 'GLD 黄金ETF', value: `$${fmt(gld.totalAssetsBln, 1)}B`, sub: `<span class="${flowCls}">${flowArrow} 5日资金流: ${flowStr}</span>`, detail: `SPDR Gold Shares。AUM $${fmt(gld.totalAssetsBln, 2)}B，持仓约 ${ozStr}（估算: AUM/NAV×0.1），NAV $${gld.navPrice != null ? fmt(gld.navPrice, 2) : 'N/A'}，份额 ${gld.sharesOutstandingMln != null ? fmt(gld.sharesOutstandingMln, 1) + 'M' : 'N/A'}。5日成交额变化反映短期资金流向（成交额≠份额变化，为近似指标）。` });
   }
 
   const el = document.getElementById('summaryCards');

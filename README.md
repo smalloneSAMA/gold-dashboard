@@ -304,6 +304,8 @@ bearScore = Σ(看空信号强度)
 | 字段 | 说明 | 本项目用法 |
 |------|------|----------|
 | totalAssets | GLD 总资产（AUM），美元 | 反映机构对黄金的配置规模 |
+| sharesOutstandingMln | 份额数 = AUM / NAV（百万份） | 参考 |
+| holdingsOunces | 估算持仓盎司 = 份额 × 0.1（每份约 1/10 盎司） | 参考，NAV 缺失时用前收盘价近似 |
 | flow5dPct | 近5日 vs 前5日的成交额(dollar volume)变化率 | 近似资金流入/流出 |
 | navPrice | 每份 NAV | 参考 |
 | volume | 当日成交量 | 参考 |
@@ -384,7 +386,7 @@ dashboard.json
 ├── divergence           # { zScore, signal }
 ├── history              # { gold, goldMA50, goldMA200, realYield, dxy, breakeven, fedAssets, vix, oil, fwdInflation, silverGoldRatio, gdx, yieldCurve }
 ├── cot                  # { current: {...}, historyCount, specNetLongPercentile }
-├── gld                  # { totalAssetsBln, flow5dPct, navPrice, volume }
+├── gld                  # { totalAssetsBln, sharesOutstandingMln, holdingsOunces, flow5dPct, navPrice, volume }
 ├── centralBankGold      # { latestQuarter, rollingAnnualTonnes, trend, quarterlyHistory }
 ├── silverGoldRatio      # { current, signal, percentile }
 ├── gdx                  # { current, changePct1d, roc20d, goldGdxRatio }
@@ -411,6 +413,15 @@ dashboard.json
 ---
 
 ## 八、更新日志 (Changelog)
+
+### 2026-08-07 — P3 优化
+
+| 编号 | 改进项 | 变更内容 |
+|------|--------|----------|
+| P3a | **COT 解析改为表头驱动** | `fetch_cot_current`/`fetch_cot_history` 不再硬编码列索引，改为解析表头列名动态映射（`_build_cot_column_index`），表头无法匹配时回退历史固定位置；修复 MICRO GOLD 微型合约被误匹配的问题；增加按日期去重，防 CFTC 修订/重复行 |
+| P3b | **GLD 持仓量计算修正** | `holdings_oz` 改为 `AUM/NAV × 0.1`（每份约 1/10 盎司），优先用官方 navPrice、回退前收盘价；新增 `sharesOutstandingMln`/`holdingsOunces` 字段并写入 JSON；前端新增 GLD 摘要卡片展示 AUM/持仓/资金流；`info` 接口受限时降级为仅返回成交数据，不再整个失败 |
+| P3c | **前端文案笔误修复** | 综合信号卡片 detail 中 `差值>'5看多` 修正为 `差值 > 5 看多，< -5 看空` |
+| P3d | **移除遗留补丁脚本** | 删除 `patch_missing_history.py`（`fetch_data.py` 已全覆盖其功能） |
 
 ### 2026-03-09 — P2 改进
 
